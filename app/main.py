@@ -428,12 +428,13 @@ def main():
         """)
         return
 
-    def format_currency(value: float) -> str:
-        if currency_unit:
+    def format_currency(value: float, include_unit: bool = True) -> str:
+        formatted = f"{value:,.0f}"
+        if include_unit and currency_unit:
             if currency_unit.isalpha():
-                return f"{currency_unit} {value:,.2f}"
-            return f"{currency_unit}{value:,.2f}"
-        return f"{value:,.2f}"
+                return f"{currency_unit} {formatted}"
+            return f"{currency_unit}{formatted}"
+        return formatted
 
     def render_metric_card(label: str, value: str, delta: str | None = None, selected: bool = False) -> None:
         delta_html = f"<div class=\"metric-delta\">{delta}</div>" if delta else ""
@@ -469,11 +470,11 @@ def main():
             "Name": sp.name,
             "Tonnage": f"{sp.tonnage_available:,}",
             distance_label: sp.distance_km if sp.distance_km is not None else "-",
-            cost_per_ton_label: format_currency(sp.cost_per_ton) if sp.cost_per_ton is not None else "-",
-            revenue_per_ton_label: format_currency(revenue) if revenue is not None else "-",
+            cost_per_ton_label: format_currency(sp.cost_per_ton, include_unit=False) if sp.cost_per_ton is not None else "-",
+            revenue_per_ton_label: format_currency(revenue, include_unit=False) if revenue is not None else "-",
         }
         for col in st.session_state.chemistry_columns:
-            row[f"{col} (%)"] = f"{sp.chemistry.get(col, 0):.2f}"
+            row[f"{col}"] = f"{sp.chemistry.get(col, 0):.2f}"
         stockpile_data.append(row)
 
     st.dataframe(pd.DataFrame(stockpile_data), use_container_width=True, hide_index=True)
@@ -517,7 +518,7 @@ def main():
 
     # Chemistry targets
     st.subheader("🧪 Chemistry Targets")
-    st.markdown("Select elements to target and set their target percentages")
+    st.markdown("Select elements to target and set their target values")
 
     chemistry_targets = {}
 
@@ -534,7 +535,7 @@ def main():
 
             with col2:
                 target = st.number_input(
-                    f"Target % for {element}",
+                    f"Target for {element}",
                     min_value=0.0,
                     max_value=100.0,
                     value=0.0,
@@ -592,7 +593,7 @@ def main():
         cost = result.cost_breakdown
         if result.achieved_chemistry:
             chemistry_value = ", ".join(
-                f"{chem.achieved:.2f}% {chem.element}" for chem in result.achieved_chemistry
+                f"{chem.achieved:.2f} {chem.element}" for chem in result.achieved_chemistry
             )
         else:
             chemistry_value = "n/a"
@@ -643,16 +644,34 @@ def main():
         st.subheader("Selected Stockpiles")
 
         selected_data = []
+        selected_stockpile_map = {sp.name: sp for sp in st.session_state.stockpiles}
+        target_elements = list(chemistry_targets.keys())
+        cost_header = "Cost"
+        revenue_header = "Revenue"
+        profit_header = "Profit"
+        if currency_unit:
+            cost_header = f"Cost ({currency_unit})"
+            revenue_header = f"Revenue ({currency_unit})"
+            profit_header = f"Profit ({currency_unit})"
+
         for sp in result.selected_stockpiles:
-            selected_data.append({
+            row = {
                 "Stockpile": sp.name,
-                "Tonnage": f"{sp.tonnage_taken:,}",
-                "Available": f"{sp.tonnage_available:,}",
-                distance_label: f"{sp.distance_km:.2f}" if sp.distance_km is not None else "-",
-                "Cost": format_currency(sp.material_cost),
-                "Revenue": format_currency(sp.revenue),
-                "Profit": format_currency(sp.profit),
-            })
+                "Tonnage Taken (wmt)": f"{sp.tonnage_taken:,}",
+                "Tonnage Available (wmt)": f"{sp.tonnage_available:,}",
+            }
+            source_stockpile = selected_stockpile_map.get(sp.name)
+            for element in target_elements:
+                value = None
+                if source_stockpile:
+                    value = source_stockpile.chemistry.get(element)
+                row[element] = f"{value:.2f}" if value is not None else "-"
+
+            row[distance_label] = f"{sp.distance_km:.2f}" if sp.distance_km is not None else "-"
+            row[cost_header] = format_currency(sp.material_cost, include_unit=False)
+            row[revenue_header] = format_currency(sp.revenue, include_unit=False)
+            row[profit_header] = format_currency(sp.profit, include_unit=False)
+            selected_data.append(row)
 
         st.dataframe(pd.DataFrame(selected_data), use_container_width=True, hide_index=True)
 
@@ -666,8 +685,8 @@ def main():
                 chem_data.append({
                     "Element": chem.element,
                     "Mode": chem.mode.capitalize(),
-                    "Target (%)": f"{chem.target:.2f}",
-                    "Achieved (%)": f"{chem.achieved:.2f}",
+                    "Target": f"{chem.target:.2f}",
+                    "Achieved": f"{chem.achieved:.2f}",
                     "Deviation": f"{chem.deviation:+.4f}",
                     "Status": status,
                 })
