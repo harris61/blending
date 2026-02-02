@@ -93,28 +93,62 @@ def optimize_blend(request: OptimizationRequest) -> OptimizationResult:
     neg_vars = {}
 
     for element in elements:
-        target_pct = chemistry_targets[element].target
-        mode = chemistry_targets[element].mode
-        weight = chemistry_targets[element].weight
+        ct = chemistry_targets[element]
+        target_pct = ct.target
+        operator = ct.operator
+        mode = ct.mode
+        weight = ct.weight
 
         if weight <= 0:
             continue
 
-        pos_vars[element] = pulp.LpVariable(f"pos_{element}", lowBound=0)
-        neg_vars[element] = pulp.LpVariable(f"neg_{element}", lowBound=0)
+        M = M_EXACT if mode == "exact" else M_APPROXIMATE
 
         weighted_sum = pulp.lpSum(
             tonnage[s.name] * s.chemistry.get(element, 0) for s in stockpiles
         )
         total_tons = pulp.lpSum(tonnage[s.name] for s in stockpiles)
 
-        prob += (
-            weighted_sum - target_pct * total_tons == pos_vars[element] - neg_vars[element],
-            f"chemistry_deviation_{element}",
-        )
+        if operator == "range":
+            # Two deviation pairs: one for min bound, one for max bound
+            target_max_pct = ct.target_max if ct.target_max is not None else target_pct
+            neg_min = pulp.LpVariable(f"neg_min_{element}", lowBound=0)
+            pos_max = pulp.LpVariable(f"pos_max_{element}", lowBound=0)
+            pos_min = pulp.LpVariable(f"pos_min_{element}", lowBound=0)
+            neg_max = pulp.LpVariable(f"neg_max_{element}", lowBound=0)
 
-        M = M_EXACT if mode == "exact" else M_APPROXIMATE
-        chemistry_penalty += M * weight * (pos_vars[element] + neg_vars[element])
+            # deviation from min: weighted_sum - target_pct * total_tons = pos_min - neg_min
+            prob += (
+                weighted_sum - target_pct * total_tons == pos_min - neg_min,
+                f"chemistry_deviation_min_{element}",
+            )
+            # deviation from max: weighted_sum - target_max_pct * total_tons = pos_max - neg_max
+            prob += (
+                weighted_sum - target_max_pct * total_tons == pos_max - neg_max,
+                f"chemistry_deviation_max_{element}",
+            )
+            # Penalize below min (neg_min) and above max (pos_max)
+            chemistry_penalty += M * weight * (neg_min + pos_max)
+            # Store for reference
+            neg_vars[element] = neg_min
+            pos_vars[element] = pos_max
+        else:
+            pos_vars[element] = pulp.LpVariable(f"pos_{element}", lowBound=0)
+            neg_vars[element] = pulp.LpVariable(f"neg_{element}", lowBound=0)
+
+            prob += (
+                weighted_sum - target_pct * total_tons == pos_vars[element] - neg_vars[element],
+                f"chemistry_deviation_{element}",
+            )
+
+            if operator == "=":
+                chemistry_penalty += M * weight * (pos_vars[element] + neg_vars[element])
+            elif operator in (">", ">="):
+                # Penalize only shortfall (neg)
+                chemistry_penalty += M * weight * neg_vars[element]
+            elif operator in ("<", "<="):
+                # Penalize only excess (pos)
+                chemistry_penalty += M * weight * pos_vars[element]
 
     # Set objective
     if optimization_mode == "profit":
@@ -192,8 +226,11 @@ def optimize_blend(request: OptimizationRequest) -> OptimizationResult:
     has_exact_miss = False
 
     for element in elements:
-        target_pct = chemistry_targets[element].target
-        mode = chemistry_targets[element].mode
+        ct = chemistry_targets[element]
+        target_pct = ct.target
+        operator = ct.operator
+        mode = ct.mode
+        target_max_pct = ct.target_max
 
         weighted_sum = sum(
             sp.tonnage_taken * stockpile_map[sp.name].chemistry.get(element, 0)
@@ -201,18 +238,37 @@ def optimize_blend(request: OptimizationRequest) -> OptimizationResult:
         )
         achieved_pct = weighted_sum / actual_tonnage if actual_tonnage > 0 else 0
         deviation = achieved_pct - target_pct
-        is_exact_match = abs(deviation) <= EXACT_TOLERANCE
+
+        # Determine if constraint is satisfied
+        if operator == "=":
+            is_satisfied = abs(deviation) <= EXACT_TOLERANCE
+        elif operator == ">":
+            is_satisfied = achieved_pct > target_pct - EXACT_TOLERANCE
+        elif operator == ">=":
+            is_satisfied = achieved_pct >= target_pct - EXACT_TOLERANCE
+        elif operator == "<":
+            is_satisfied = achieved_pct < target_pct + EXACT_TOLERANCE
+        elif operator == "<=":
+            is_satisfied = achieved_pct <= target_pct + EXACT_TOLERANCE
+        elif operator == "range":
+            max_val = target_max_pct if target_max_pct is not None else target_pct
+            is_satisfied = (achieved_pct >= target_pct - EXACT_TOLERANCE and
+                           achieved_pct <= max_val + EXACT_TOLERANCE)
+        else:
+            is_satisfied = abs(deviation) <= EXACT_TOLERANCE
 
         achieved_chemistry.append(AchievedChemistry(
             element=element,
+            operator=operator,
             target=target_pct,
+            target_max=target_max_pct,
             achieved=round(achieved_pct, 4),
             deviation=round(deviation, 4),
             mode=mode,
-            is_exact_match=is_exact_match,
+            is_satisfied=is_satisfied,
         ))
 
-        if mode == "exact" and not is_exact_match:
+        if mode == "exact" and not is_satisfied:
             has_exact_miss = True
 
     if has_exact_miss and min_increment > 1:

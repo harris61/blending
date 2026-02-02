@@ -16,7 +16,9 @@ class Stockpile(BaseModel):
 
 class ChemistryTarget(BaseModel):
     """Target and weight for a single chemistry element."""
-    target: float = Field(ge=0, le=100, description="Target percentage")
+    operator: Literal["=", "<", ">", "<=", ">=", "range"] = Field(default="=", description="Constraint operator")
+    target: float = Field(ge=0, le=100, description="Target percentage (min for range)")
+    target_max: Optional[float] = Field(default=None, ge=0, le=100, description="Max percentage (only for range)")
     mode: Literal["exact", "approximate"] = Field(default="approximate", description="Exact or approximate targeting")
     weight: float = Field(ge=0, default=1.0, description="Priority weight for optimization")
 
@@ -63,11 +65,13 @@ class CostBreakdown(BaseModel):
 class AchievedChemistry(BaseModel):
     """Chemistry achievement for a single element."""
     element: str
+    operator: str = "="
     target: float
+    target_max: Optional[float] = None
     achieved: float
     deviation: float
     mode: str = "approximate"
-    is_exact_match: bool = False
+    is_satisfied: bool = False
 
 
 class OptimizationResult(BaseModel):

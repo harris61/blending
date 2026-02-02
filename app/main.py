@@ -524,7 +524,7 @@ def main():
 
     if st.session_state.chemistry_columns:
         for element in st.session_state.chemistry_columns:
-            col1, col2, col3 = st.columns([1, 2, 2])
+            col1, col2, col3, col4 = st.columns([1, 1.5, 2, 1.5])
 
             with col1:
                 enabled = st.checkbox(
@@ -534,18 +534,53 @@ def main():
                 )
 
             with col2:
-                target = st.number_input(
-                    f"Target for {element}",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=0.0,
-                    step=0.01,
-                    key=f"target_{element}",
+                operator = st.selectbox(
+                    f"Operator for {element}",
+                    options=["=", "<", ">", "<=", ">=", "range"],
+                    key=f"operator_{element}",
                     label_visibility="collapsed",
                     disabled=not enabled,
                 )
 
             with col3:
+                if operator == "range":
+                    sub1, sub2 = st.columns(2)
+                    with sub1:
+                        target = st.number_input(
+                            f"Min for {element}",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=0.0,
+                            step=0.01,
+                            key=f"target_{element}",
+                            placeholder="Min",
+                            disabled=not enabled,
+                        )
+                    with sub2:
+                        target_max = st.number_input(
+                            f"Max for {element}",
+                            min_value=0.0,
+                            max_value=100.0,
+                            value=0.0,
+                            step=0.01,
+                            key=f"target_max_{element}",
+                            placeholder="Max",
+                            disabled=not enabled,
+                        )
+                else:
+                    target = st.number_input(
+                        f"Target for {element}",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=0.0,
+                        step=0.01,
+                        key=f"target_{element}",
+                        label_visibility="collapsed",
+                        disabled=not enabled,
+                    )
+                    target_max = None
+
+            with col4:
                 mode = st.selectbox(
                     f"Mode for {element}",
                     options=["approximate", "exact"],
@@ -556,7 +591,13 @@ def main():
                 )
 
             if enabled and target > 0:
-                chemistry_targets[element] = ChemistryTarget(target=target, mode=mode, weight=1.0)
+                chemistry_targets[element] = ChemistryTarget(
+                    operator=operator,
+                    target=target,
+                    target_max=target_max if operator == "range" else None,
+                    mode=mode,
+                    weight=1.0,
+                )
     else:
         st.info("No chemistry columns detected in CSV")
 
@@ -681,12 +722,21 @@ def main():
 
             chem_data = []
             for chem in result.achieved_chemistry:
-                status = "✓" if chem.is_exact_match else "~"
+                status = "✓" if chem.is_satisfied else "✗"
+
+                # Format target display based on operator
+                if chem.operator == "range" and chem.target_max is not None:
+                    target_display = f"{chem.target:.2f}% – {chem.target_max:.2f}%"
+                elif chem.operator == "=":
+                    target_display = f"{chem.target:.2f}%"
+                else:
+                    target_display = f"{chem.operator} {chem.target:.2f}%"
+
                 chem_data.append({
                     "Element": chem.element,
                     "Mode": chem.mode.capitalize(),
-                    "Target": f"{chem.target:.2f}",
-                    "Achieved": f"{chem.achieved:.2f}",
+                    "Target": target_display,
+                    "Achieved": f"{chem.achieved:.2f}%",
                     "Deviation": f"{chem.deviation:+.4f}",
                     "Status": status,
                 })
