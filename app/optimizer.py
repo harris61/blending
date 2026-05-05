@@ -1,7 +1,7 @@
 """Core optimization logic using PuLP for linear/mixed-integer programming."""
 
 import pulp
-from app.models import (
+from models import (
     Stockpile,
     OptimizationRequest,
     OptimizationResult,

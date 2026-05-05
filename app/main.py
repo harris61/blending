@@ -4,12 +4,12 @@ import streamlit as st
 import pandas as pd
 from dataclasses import dataclass, field
 
-from app.models import (
+from models import (
     Stockpile,
     OptimizationRequest,
     ChemistryTarget,
 )
-from app.optimizer import optimize_blend
+from optimizer import optimize_blend
 
 # Standard column names and their aliases (case-insensitive matching)
 COLUMN_ALIASES = {
